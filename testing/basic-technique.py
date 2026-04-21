@@ -2,7 +2,20 @@ from rdflib import Graph, RDF, OWL, RDFS, Namespace, URIRef
 import re
 from difflib import SequenceMatcher
 
-## an ontology is just a graph of triples. Finding entities means searching that graph for triples with specific patterns. RDFLib gives you g.subjects(), g.objects(), and g.triples() to search in different ways.
+
+# A basic lexical matcher that:
+# 1. Loads two ontologies and identifies which entities (properties, class and objects) each one contains
+# 2. Extracts the label (name) for each entity — either from an rdfs:label annotation or from the URI local name
+# 3. Normalises those labels into clean, comparable strings
+# 4. Compares every label in ontology A against every label in ontology B using string similarity
+# 5. Keeps pairs that score above a threshold and outputs them as owl:equivalentClass triples
+# uses OAEI cmt-conference.ttl for refernce alignment
+
+
+## an ontology is just a graph of triples. 
+# Finding entities means searching that graph for triples with specific patterns. 
+# RDFLib gives g.subjects(), g.objects(), and g.triples() to search in different ways.
+# this is only using class
 def load_ontology(filepath):
     """Load an ontology and extract classes, object properties, and data properties."""
     g = Graph()
@@ -40,7 +53,9 @@ print("Class names:", [str(c).split('#')[-1] for c in classes2])
 
 
 # EXTRACT & NORMALIZE LABELS
-
+## Every entity has a URI like http://cmt#PaperAbstract. 
+# The bit after the # is the local name this is the human-readable part we want for comparison. 
+# But some ontologies also have rdfs:label annotations which can be cleaner, so check for those first
 def get_label(entity, graph):
     """Get the best label for an entity: rdfs:label if available, otherwise URI local name."""
     # Try rdfs:label first
@@ -51,6 +66,10 @@ def get_label(entity, graph):
     uri = str(entity)
     return uri.split("#")[-1]
 
+##regex finds any place where a lowercase letter is immediately followed by an uppercase letter (camelCase boundary)
+# and inserts a space
+#Without this step something like ProgramCommittee and Program_committee would score poorly 
+# because the raw strings look quite different. After normalisation, they're identical.
 def normalise_label(label):
     """Turn 'PaperAbstract' or 'Conference_document' into 'paper abstract' or 'conference document'."""
     # Insert space before uppercase letters (split camelCase)
@@ -83,28 +102,35 @@ def string_similarity(s1, s2):
     return SequenceMatcher(None, s1, s2).ratio()
 
 
-# Compare every CMT class against every Conference class
+# look at every CMT class against every Conference class
 THRESHOLD = 0.6  # only keep matches above this
 
 print("\string comparison (classes)")
 print(f"Comparing {len(classes1)} CMT classes x {len(classes2)} Conference classes")
 print(f"Threshold: {THRESHOLD}\n")
 
-matches_found = []
 
-for c1 in classes1:
-    label1 = normalise_label(get_label(c1, g1))
-    
-    for c2 in classes2:
-        label2 = normalise_label(get_label(c2, g2))
-        
-        sim = string_similarity(label1, label2)
-        
-        if sim >= THRESHOLD:
-            matches_found.append((label1, label2, sim, c1, c2))
 
-# Sort by similarity score (highest first)
-matches_found.sort(key=lambda x: x[2], reverse=True)
+### for loop to search for all matches, in classes, objects,
+def find_matches(entities1, graph1, entities2, graph2, threshold):
+    """Compare two lists of entities and return matches above threshold."""
+    matches = []
+    for e1 in entities1:
+        label1 = normalise_label(get_label(e1, graph1))
+        for e2 in entities2:
+            label2 = normalise_label(get_label(e2, graph2))
+            sim = string_similarity(label1, label2)
+            if sim >= threshold:
+                matches.append((label1, label2, sim, e1, e2))
+    return matches
+
+# Compare classes, object properties, and data properties separately
+class_matches = find_matches(classes1, g1, classes2, g2, THRESHOLD)
+obj_matches = find_matches(obj1, g1, obj2, g2, THRESHOLD)
+data_matches = find_matches(data1, g1, data2, g2, THRESHOLD)
+
+# Combine all matches
+matches_found = class_matches + obj_matches + data_matches
 
 # Print results
 print(f"Found {len(matches_found)} candidate matches:\n")
@@ -122,12 +148,17 @@ OUTPUT_THRESHOLD = 0.8
 
 # Filter to only keep the best match per entity and avoid the duplicates
 best_matches = {}
-for label1, label2, sim, c1, c2 in matches_found:
+for label1, label2, sim, e1, e2 in class_matches:
     if sim >= OUTPUT_THRESHOLD:
-        # For each CMT entity, keep only its highest-scoring match
-        key = str(c1)
+        key = str(e1)
         if key not in best_matches or sim > best_matches[key][2]:
-            best_matches[key] = (c1, c2, sim)
+            best_matches[key] = (e1, e2, sim, OWL.equivalentClass)
+
+for label1, label2, sim, e1, e2 in obj_matches + data_matches:
+    if sim >= OUTPUT_THRESHOLD:
+        key = str(e1)
+        if key not in best_matches or sim > best_matches[key][2]:
+            best_matches[key] = (e1, e2, sim, OWL.equivalentProperty)
 
 # create the otput
 output = Graph()
@@ -135,11 +166,12 @@ OWL_NS = Namespace("http://www.w3.org/2002/07/owl#")
 
 print(f"\noutput mappings (threshold={OUTPUT_THRESHOLD})\n")
 
-for c1, c2, sim in best_matches.values():
-    output.add((c1, OWL.equivalentClass, c2))
-    label1 = normalise_label(get_label(c1, g1))
-    label2 = normalise_label(get_label(c2, g2))
-    print(f"  {label1:30s} ≡ {label2:30s} ({sim:.3f})")
+for e1, e2, sim, predicate in best_matches.values():
+    output.add((e1, predicate, e2))
+    label1 = normalise_label(get_label(e1, g1))
+    label2 = normalise_label(get_label(e2, g2))
+    pred_name = "equivalentClass" if predicate == OWL.equivalentClass else "equivalentProperty"
+    print(f"  {label1:30s} ≡ {label2:30s} ({sim:.3f}) [{pred_name}]")
 
 # Save to file
 output_file = "my-cmt-conference.ttl"
