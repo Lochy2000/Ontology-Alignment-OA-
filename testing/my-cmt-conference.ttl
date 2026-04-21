@@ -1,0 +1,16 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+<http://cmt#Conference> owl:equivalentClass <http://conference#Conference> .
+<http://cmt#ConferenceChair> owl:equivalentClass <http://conference#Conference_part> .
+<http://cmt#ConferenceMember> owl:equivalentClass <http://conference#Conference_fees> .
+<http://cmt#Paper> owl:equivalentClass <http://conference#Paper> .
+<http://cmt#Person> owl:equivalentClass <http://conference#Person> .
+<http://cmt#ProgramCommittee> owl:equivalentClass <http://conference#Program_committee> .
+<http://cmt#ProgramCommitteeChair> owl:equivalentClass <http://conference#Program_committee> .
+<http://cmt#ProgramCommitteeMember> owl:equivalentClass <http://conference#Program_committee> .
+<http://cmt#Review> owl:equivalentClass <http://conference#Review> .
+<http://cmt#Reviewer> owl:equivalentClass <http://conference#Reviewer> .
+
+
+
+
+  
